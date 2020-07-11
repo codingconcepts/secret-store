@@ -1,24 +1,31 @@
 package main
 
 import (
-	"github.com/go-redis/redis/v8"
+	"log"
+	"net/http"
+	"os"
+	"secret-store/server/pkg/server"
+	"time"
+
+	"github.com/gorilla/mux"
 )
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	db, err := bolt.Open("./db", 0666, &bolt.Options{Timeout: 1 * time.Second})
-	if err != nil {
-		log.Fatalf("error opening database: %v", err)
-	}
+	s, err := server.New(
+		mustGetEnv("REDIS_ADDR"),
+		mustGetEnv("REDIS_PASS"),
+	)
 
-	s := &server{
-		db: db,
+	if err != nil {
+		log.Fatalf("error creating server: %v", err)
 	}
 
 	router := mux.NewRouter()
-	router.HandleFunc("/", s.set()).Methods(http.MethodPost)
-	router.HandleFunc("/{id}", s.get()).Methods(http.MethodGet)
+	router.HandleFunc("/register", s.Register()).Methods(http.MethodPost)
+	router.HandleFunc("/", s.Set()).Methods(http.MethodPost)
+	router.HandleFunc("/{id}", s.Get()).Methods(http.MethodGet)
 
 	server := &http.Server{
 		Addr:              ":8080",
@@ -29,5 +36,14 @@ func main() {
 		IdleTimeout:       time.Second * 5,
 	}
 
+	log.Println("server ready")
 	log.Fatal(server.ListenAndServe())
+}
+
+func mustGetEnv(key string) string {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		log.Fatalf("missing env var: %q", key)
+	}
+	return value
 }
