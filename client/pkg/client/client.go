@@ -2,7 +2,6 @@ package client
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,7 +28,7 @@ func New(addr string) *Client {
 // Execute makes a call to the API, marshalling a request into JSON if provided,
 // and unmarshalling into a response object if provided.
 // It returns a response code and an error if one occurred.
-func (c *Client) Execute(ctx context.Context, method string, address string, request interface{}, response interface{}) error {
+func (c *Client) Execute(method string, address string, request interface{}, response interface{}) error {
 	// If this is a request with a body, marshal the request JSON and initialise
 	// a reader, if not, the reader stays nil, which is expected.
 	var bodyReader io.Reader
@@ -41,7 +40,7 @@ func (c *Client) Execute(ctx context.Context, method string, address string, req
 		bodyReader = bytes.NewBuffer(body)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, address, bodyReader)
+	req, err := http.NewRequest(method, address, bodyReader)
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}

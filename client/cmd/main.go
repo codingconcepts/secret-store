@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -13,7 +12,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -57,16 +55,13 @@ func initialise(c *client.Client, configPath string) (*config, error) {
 		}
 		config.ID = uuid.New().String()
 
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-		defer cancel()
-
 		// Store config.
 		request := requests.Register{
 			PublicKey: config.PublicKey,
 			ID:        config.ID,
 		}
 
-		if err = c.Execute(ctx, http.MethodPost, c.Addr, request, nil); err != nil {
+		if err = c.Execute(http.MethodPost, c.Addr, request, nil); err != nil {
 			return nil, fmt.Errorf("error registering client: %w", err)
 		}
 
