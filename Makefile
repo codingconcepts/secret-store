@@ -3,8 +3,11 @@
 client:
 	go run ./client/cmd/main.go
 
-server:
+server_local:
 	REDIS_ADDR="localhost:6379" REDIS_PASS="" go run ./server/cmd/main.go
+
+server:
+	go run ./server/cmd/main.go
 
 redis:
 	docker run -d -p 6379:6379 --name redis redis
