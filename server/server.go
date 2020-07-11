@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"secret-store/pkg/models"
 
@@ -21,6 +22,19 @@ type Server struct {
 
 // New returns a pointer to a new Server.
 func New(db *bbolt.DB) (*Server, error) {
+	err := db.Update(func(tx *bbolt.Tx) error {
+		if _, err := tx.CreateBucketIfNotExists(userBucket); err != nil {
+			return err
+		}
+		if _, err := tx.CreateBucketIfNotExists(secretBucket); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error creating buckets: %w", err)
+	}
+
 	return &Server{
 		db: db,
 	}, nil
