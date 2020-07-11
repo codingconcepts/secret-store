@@ -10,12 +10,15 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 
 	"secret-store/client/pkg/client"
+	"secret-store/pkg/requests"
 )
 
 func main() {
@@ -23,20 +26,24 @@ func main() {
 	server := flag.String("s", "localhost:8080", "address of the server")
 	flag.Parse()
 
-	// Load the config file from disk or register if it doesn't.
+	client := client.New(*server)
 
-	client := client.New()
-	_ = configPath
-	_ = client
+	// Load the config file from disk or register if it doesn't.
+	config, err := initialise(client, *configPath)
+	if err != nil {
+		log.Fatalf("error initialising config: %v", err)
+	}
+
+	_ = config
 }
 
 type config struct {
 	ID               string `json:"id"`
 	PrivateKeyUnsafe string `json:"private_key"`
-	PublicKey string `json:"public_key"`
+	PublicKey        string `json:"public_key"`
 }
 
-func initialise(c *client.Client. configPath string) (*config, error) {
+func initialise(c *client.Client, configPath string) (*config, error) {
 	var config config
 
 	if file, err := os.Open(configPath); err != nil {
@@ -44,28 +51,47 @@ func initialise(c *client.Client. configPath string) (*config, error) {
 			return nil, fmt.Errorf("error opening config file: %w", err)
 		}
 
-		// Create config and store it.
-		config.private, public, err = generateRSA()
-		if err != nil {
+		// Create config.
+		if config.PrivateKeyUnsafe, config.PublicKey, err = generateRSA(); err != nil {
 			return nil, err
 		}
-		id := uuid.New().String()
+		config.ID = uuid.New().String()
 
-		config.
-	} else{
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+
+		// Store config.
+		request := requests.Register{
+			PublicKey: config.PublicKey,
+			ID:        config.ID,
+		}
+
+		if err = c.Execute(ctx, http.MethodPost, c.Addr, request, nil); err != nil {
+			return nil, fmt.Errorf("error registering client: %w", err)
+		}
+
+	} else {
 		if err = json.NewDecoder(file).Decode(&config); err != nil {
 			return nil, fmt.Errorf("error decoding config file: %v", err)
 		}
 	}
+
+	return &config, nil
 }
 
-func generateRSA() (*rsa.PrivateKey, *rsa.PublicKey, error) {
+func generateRSA() (string, string, error) {
 	private, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error generating rsa keys: %w", err)
+		return "", "", fmt.Errorf("error generating rsa keys: %w", err)
 	}
 
-	return private, &private.PublicKey, nil
+	privatePEM := privateKeyToPEM(private)
+	publicPEM, err := publicKeyToPEM(&private.PublicKey)
+	if err != nil {
+		return "", "", fmt.Errorf("error encoding public pem: %v", err)
+	}
+
+	return privatePEM, publicPEM, nil
 }
 
 func privateKeyToPEM(private *rsa.PrivateKey) string {

@@ -12,12 +12,14 @@ import (
 
 // Client executes HTTP requests against the API.
 type Client struct {
-	net *http.Client
+	Addr string
+	net  *http.Client
 }
 
 // New returns a pointer to a new Client.
-func New() *Client {
+func New(addr string) *Client {
 	return &Client{
+		Addr: addr,
 		net: &http.Client{
 			Timeout: time.Second * 5,
 		},
