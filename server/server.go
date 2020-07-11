@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"secret-store/pkg/models"
 
 	"github.com/gorilla/mux"
 	"go.etcd.io/bbolt"
@@ -25,15 +26,10 @@ func New(db *bbolt.DB) (*Server, error) {
 	}, nil
 }
 
-type registerRequest struct {
-	ID        string `json:"id"`
-	PublicKey string `json:"public_key"`
-}
-
 // Register registers a new user.
 func (s *Server) Register() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var request registerRequest
+		var request models.RegisterRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
@@ -46,15 +42,10 @@ func (s *Server) Register() http.HandlerFunc {
 	}
 }
 
-type setRequest struct {
-	ID   string `json:"id"`
-	Data string `json:"data"`
-}
-
 // Set sends a secret to someone.
 func (s *Server) Set() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var request setRequest
+		var request models.SetRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
@@ -65,10 +56,6 @@ func (s *Server) Set() http.HandlerFunc {
 			return
 		}
 	}
-}
-
-type getResponse struct {
-	Data string `json:"data"`
 }
 
 // Get receives a secret from someone.
@@ -86,7 +73,7 @@ func (s *Server) Get() http.HandlerFunc {
 			return
 		}
 
-		if err := json.NewEncoder(w).Encode(getResponse{Data: string(data)}); err != nil {
+		if err := json.NewEncoder(w).Encode(models.GetResponse{Data: string(data)}); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

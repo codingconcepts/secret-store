@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"secret-store/client/pkg/client"
-	"secret-store/pkg/requests"
+	"secret-store/pkg/models"
 )
 
 func main() {
@@ -56,7 +56,7 @@ func initialise(c *client.Client, configPath string) (*config, error) {
 		config.ID = uuid.New().String()
 
 		// Store config.
-		request := requests.Register{
+		request := models.RegisterRequest{
 			PublicKey: config.PublicKey,
 			ID:        config.ID,
 		}
