@@ -2,42 +2,25 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
 	"secret-store/pkg/models"
 
+	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
-	"go.etcd.io/bbolt"
-)
-
-var (
-	userBucket   = []byte("user")
-	secretBucket = []byte("secret")
 )
 
 // Server holds the runtime configuration for the API.
 type Server struct {
-	db *bbolt.DB
+	client redis.Cmdable
 }
 
 // New returns a pointer to a new Server.
-func New(db *bbolt.DB) (*Server, error) {
-	err := db.Update(func(tx *bbolt.Tx) error {
-		if _, err := tx.CreateBucketIfNotExists(userBucket); err != nil {
-			return err
-		}
-		if _, err := tx.CreateBucketIfNotExists(secretBucket); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error creating buckets: %w", err)
-	}
-
+func New(client redis.Cmdable) *Server {
 	return &Server{
-		db: db,
-	}, nil
+		client: client,
+	}
 }
 
 // Register registers a new user.
@@ -49,8 +32,34 @@ func (s *Server) Register() http.HandlerFunc {
 			return
 		}
 
-		if err := s.set(userBucket, []byte(request.ID), []byte(request.PublicKey)); err != nil {
-			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		id := uuid.New().String()
+		if err := s.client.Set(r.Context(), "user:"+id, request.PublicKey, 0).Err(); err != nil {
+			respond(http.StatusInternalServerError, w, models.Response{Data: err.Error()})
+			return
+		}
+
+		respond(http.StatusOK, w, models.Response{Data: id})
+	}
+}
+
+// GetPublicKey returns the public key of a user by a given id.
+func (s *Server) GetPublicKey() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := mux.Vars(r)["id"]
+		if !ok {
+			http.Error(w, "missing id parameter", http.StatusUnprocessableEntity)
+			return
+		}
+
+		data, err := s.client.Get(r.Context(), "user:"+id).Result()
+		if err != nil {
+			log.Printf("error getting public key: %v", err)
+			http.Error(w, "error getting public key", http.StatusInternalServerError)
+			return
+		}
+
+		if err := json.NewEncoder(w).Encode(models.Response{Data: data}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -65,8 +74,9 @@ func (s *Server) Set() http.HandlerFunc {
 			return
 		}
 
-		if err := s.set(secretBucket, []byte(request.ID), []byte(request.Data)); err != nil {
-			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		if err := s.client.Set(r.Context(), "data:"+request.ID, request.Data, request.TTL.Duration).Err(); err != nil {
+			log.Printf("error setting secret: %v", err)
+			http.Error(w, "error setting secret", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -81,31 +91,33 @@ func (s *Server) Get() http.HandlerFunc {
 			return
 		}
 
-		data := s.get(secretBucket, []byte(id))
-		if data == nil {
-			http.Error(w, "", http.StatusNoContent)
+		data, err := s.client.Get(r.Context(), id).Result()
+		if err != nil {
+			log.Printf("error getting secret: %v", err)
+			http.Error(w, "error getting secret", http.StatusInternalServerError)
 			return
 		}
 
-		if err := json.NewEncoder(w).Encode(models.GetResponse{Data: string(data)}); err != nil {
+		if err := json.NewEncoder(w).Encode(models.Response{Data: data}); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 }
 
-func (s *Server) get(bucket, key []byte) []byte {
-	var value []byte
-	s.db.View(func(tx *bbolt.Tx) error {
-		value = tx.Bucket(bucket).Get(key)
-		return nil
-	})
+// respond writes a JSON response to to the caller, by marshalling the val struct.
+func respond(code int, w http.ResponseWriter, val interface{}) {
+	if code == http.StatusNoContent || val == nil {
+		w.WriteHeader(code)
+		return
+	}
 
-	return value
-}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
 
-func (s *Server) set(bucket, key, value []byte) error {
-	return s.db.Update(func(tx *bbolt.Tx) error {
-		return tx.Bucket(bucket).Put(key, value)
-	})
+	// If an error occurs, log it, as it's likely we won't be able to respond
+	// to the user.
+	if err := json.NewEncoder(w).Encode(val); err != nil {
+		log.Printf("error encoding response: %v", err)
+	}
 }

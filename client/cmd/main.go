@@ -7,32 +7,57 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
-
-	"github.com/google/uuid"
+	"time"
 
 	"secret-store/client/pkg/client"
-	"secret-store/pkg/models"
+
+	"github.com/spf13/cobra"
+)
+
+var (
+	c          *client.Client
+	configPath string
+	server     string
+	bits       int
 )
 
 func main() {
-	configPath := flag.String("p", "secret-store.json", "config file path")
-	server := flag.String("s", "localhost:8080", "address of the server")
-	flag.Parse()
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	client := client.New(*server)
-
-	// Load the config file from disk or register if it doesn't.
-	config, err := initialise(client, *configPath)
-	if err != nil {
-		log.Fatalf("error initialising config: %v", err)
+	initCmd := &cobra.Command{
+		Use:   "init",
+		Short: "initialise client with a new key",
+		Run: func(cmd *cobra.Command, args []string) {
+			register(configPath)
+		},
+	}
+	pushCmd := &cobra.Command{
+		Use:   "push",
+		Short: "push a message to someone",
+		Long:  "Arg[0] = their id\nArg[1] = the message\n Arg[2] (optional) = a ttl duration",
+		Run:   push,
+		Args:  cobra.RangeArgs(2, 3),
+	}
+	pullCmd := &cobra.Command{
+		Use:   "pull",
+		Short: "pull a message from someone",
+		Long:  "pull a message from someone",
+		Run:   pull,
+		Args:  cobra.ExactArgs(1),
 	}
 
-	_ = config
+	rootCmd := &cobra.Command{}
+	rootCmd.PersistentFlags().StringVar(&configPath, "c", "secret-store.json", "config file path")
+	rootCmd.PersistentFlags().StringVar(&server, "s", "https://sandbox-183716.nw.r.appspot.com", "address of the server")
+	rootCmd.PersistentFlags().IntVar(&bits, "b", 3072, "RSA bit strength [1024, 2048, 3072, 4096]")
+
+	rootCmd.AddCommand(initCmd, pushCmd, pullCmd)
+	if err := rootCmd.Execute(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 type config struct {
@@ -41,41 +66,83 @@ type config struct {
 	PublicKey        string `json:"public_key"`
 }
 
-func initialise(c *client.Client, configPath string) (*config, error) {
-	var config config
+func register(configPath string) {
+	c = client.New(server)
 
-	if file, err := os.Open(configPath); err != nil {
-		if err != os.ErrNotExist {
-			return nil, fmt.Errorf("error opening config file: %w", err)
-		}
-
-		// Create config.
-		if config.PrivateKeyUnsafe, config.PublicKey, err = generateRSA(); err != nil {
-			return nil, err
-		}
-		config.ID = uuid.New().String()
-
-		// Store config.
-		request := models.RegisterRequest{
-			PublicKey: config.PublicKey,
-			ID:        config.ID,
-		}
-
-		if err = c.Execute(http.MethodPost, c.Addr, request, nil); err != nil {
-			return nil, fmt.Errorf("error registering client: %w", err)
-		}
-
-	} else {
-		if err = json.NewDecoder(file).Decode(&config); err != nil {
-			return nil, fmt.Errorf("error decoding config file: %v", err)
-		}
+	file, err := os.Open(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		log.Fatalf("error opening config file: %v", err)
 	}
 
-	return &config, nil
+	// Create crypto config.
+	var config config
+	if config.PrivateKeyUnsafe, config.PublicKey, err = generateRSA(); err != nil {
+		log.Fatal(err)
+	}
+
+	// Store public key and get ID.
+	if config.ID, err = c.Register(config.PublicKey); err != nil {
+		log.Fatalf("error registering user: %v", err)
+	}
+
+	// Write config.
+	if file, err = os.Create(configPath); err != nil {
+		log.Fatalf("error storing config: %v", err)
+	}
+	if err = json.NewEncoder(file).Encode(config); err != nil {
+		log.Fatalf("error writing config: %v", err)
+	}
+
+	log.Printf("id = %s", config.ID)
+}
+
+func push(cmd *cobra.Command, args []string) {
+	c = client.New(server)
+	id := args[0]
+	data := args[1]
+
+	var ttl time.Duration
+	if len(args) == 3 {
+		t, err := time.ParseDuration(args[2])
+		if err != nil {
+			log.Fatalf("error parsing ttl for message: %v", err)
+		}
+		ttl = t
+	}
+
+	// Fetch the recipient's public key.
+	pubPEM, err := c.GetPublicKeyPEM(id)
+	if err != nil {
+		log.Fatalf("error getting reciplient's public key: %v", err)
+	}
+
+	pub, err := pemToPublicKey([]byte(pubPEM))
+	if err != nil {
+		log.Fatalf("error parsing recipient's public key: %v", err)
+	}
+
+	// Encrypt the message.
+	ct, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pub, []byte(data), nil)
+	if err != nil {
+		log.Fatalf("error encrypting message: %v", err)
+	}
+
+	// Send the message.
+	if err = c.Send(id, ct, ttl); err != nil {
+		log.Fatalf("error sending message: %v", err)
+	}
+
+	log.Printf("successfully sent message to %s", id)
+}
+
+func pull(cmd *cobra.Command, args []string) {
+	c = client.New(server)
+
+	log.Println("pull", args)
 }
 
 func generateRSA() (string, string, error) {
-	private, err := rsa.GenerateKey(rand.Reader, 4096)
+	private, err := rsa.GenerateKey(rand.Reader, bits)
 	if err != nil {
 		return "", "", fmt.Errorf("error generating rsa keys: %w", err)
 	}

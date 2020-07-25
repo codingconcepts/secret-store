@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
+	"secret-store/pkg/models"
 	"time"
 )
 
@@ -23,6 +26,61 @@ func New(addr string) *Client {
 			Timeout: time.Second * 5,
 		},
 	}
+}
+
+// Register stores a user's public key and returns their server-generated ID.
+func (c *Client) Register(pubPEM string) (string, error) {
+	fullURL, err := joinURL(c.Addr, "users")
+	if err != nil {
+		return "", fmt.Errorf("error joining url: %w", err)
+	}
+
+	request := models.RegisterRequest{
+		PublicKey: pubPEM,
+	}
+
+	// Make request to register user in the server and get the resulting ID.
+	var response models.Response
+	if err = c.Execute(http.MethodPost, fullURL, request, &response); err != nil {
+		return "", fmt.Errorf("error registering client: %w", err)
+	}
+	return response.Data, err
+}
+
+// GetPublicKeyPEM returns the public key of a recipient with a given id.
+func (c *Client) GetPublicKeyPEM(id string) (string, error) {
+	fullURL, err := joinURL(c.Addr, "users/"+id)
+	if err != nil {
+		return "", fmt.Errorf("error joining url: %w", err)
+	}
+
+	var response models.Response
+	if err = c.Execute(http.MethodGet, fullURL, nil, &response); err != nil {
+		return "", fmt.Errorf("error getting public key: %w", err)
+	}
+	return response.Data, err
+}
+
+// Send sends an encrypted message to a user with a given id.
+func (c *Client) Send(id string, data []byte, ttl time.Duration) error {
+	fullURL, err := joinURL(c.Addr, "secrets")
+	if err != nil {
+		return fmt.Errorf("error joining url: %w", err)
+	}
+
+	// Make request to register user in the server and get the resulting ID.
+	request := models.SetRequest{
+		ID:   id,
+		Data: data,
+		TTL: models.Duration{
+			Duration: ttl,
+		},
+	}
+
+	if err = c.Execute(http.MethodPost, fullURL, request, nil); err != nil {
+		return fmt.Errorf("error sending message: %v", err)
+	}
+	return nil
 }
 
 // Execute makes a call to the API, marshalling a request into JSON if provided,
@@ -77,4 +135,14 @@ func (c *Client) unmarshalBody(r *http.Response, response interface{}) error {
 	}
 
 	return nil
+}
+
+func joinURL(base string, fragment string) (string, error) {
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	u.Path = path.Join(u.Path, fragment)
+
+	return u.String(), nil
 }

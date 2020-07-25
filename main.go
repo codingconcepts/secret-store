@@ -1,32 +1,41 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 	"secret-store/server"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/mux"
-	"go.etcd.io/bbolt"
+	"github.com/joho/godotenv"
 )
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	db, err := bbolt.Open("secrets.db", 0666, nil)
+	err := godotenv.Load()
 	if err != nil {
-		log.Fatalf("error opening boltdb: %v", err)
+		log.Fatal("Error loading .env file")
 	}
-	defer db.Close()
 
-	s, err := server.New(db)
-	if err != nil {
-		log.Fatalf("error creating server: %v", err)
+	client := redis.NewClient(&redis.Options{
+		Addr:     mustGetEnv("REDIS_ADDR"),
+		Password: mustGetEnv("REDIS_PASS"),
+		DB:       0,
+	})
+
+	if _, err := client.Ping(context.Background()).Result(); err != nil {
+		log.Fatalf("error pinging redis: %v", err)
 	}
+
+	s := server.New(client)
 
 	router := mux.NewRouter()
-	router.HandleFunc("/register", s.Register()).Methods(http.MethodPost)
+	router.HandleFunc("/users", s.Register()).Methods(http.MethodPost)
+	router.HandleFunc("/users/{id}", s.GetPublicKey()).Methods(http.MethodGet)
 	router.HandleFunc("/secrets", s.Set()).Methods(http.MethodPost)
 	router.HandleFunc("/secrets/{id}", s.Get()).Methods(http.MethodGet)
 

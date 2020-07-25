@@ -1,6 +1,6 @@
 package models
 
-// GetResponse contains data to send back to the client.
-type GetResponse struct {
+// Response contains data to send back to the client.
+type Response struct {
 	Data string `json:"data"`
 }
