@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -127,18 +128,51 @@ func push(cmd *cobra.Command, args []string) {
 		log.Fatalf("error encrypting message: %v", err)
 	}
 
+	log.Println(ct)
+
 	// Send the message.
-	if err = c.Send(id, ct, ttl); err != nil {
+	id, err = c.Send(id, ct, ttl)
+	if err != nil {
 		log.Fatalf("error sending message: %v", err)
 	}
 
-	log.Printf("successfully sent message to %s", id)
+	log.Printf("%s", id)
 }
 
 func pull(cmd *cobra.Command, args []string) {
 	c = client.New(server)
 
-	log.Println("pull", args)
+	id := args[0]
+
+	// Load the private key.
+	f, err := os.Open(configPath)
+	if err != nil {
+		log.Fatalf("error opening config file: %v", err)
+	}
+
+	var conf config
+	if err = json.NewDecoder(f).Decode(&conf); err != nil {
+		log.Fatalf("error parsing config file: %v", err)
+	}
+
+	pri, err := pemToPrivateKey(conf.PrivateKeyUnsafe)
+	if err != nil {
+		log.Fatalf("error reading private key: %v", err)
+	}
+
+	// Get the encrypted message.
+	ct, err := c.Get(id)
+	if err != nil {
+		log.Fatalf("error getting message: %v", err)
+	}
+
+	// Decrypt the message and print.
+	pt, err := pri.Decrypt(nil, ct, &rsa.OAEPOptions{Hash: crypto.SHA256})
+	if err != nil {
+		log.Fatalf("error decrypting message: %v", err)
+	}
+
+	log.Println(string(pt))
 }
 
 func generateRSA() (string, string, error) {
